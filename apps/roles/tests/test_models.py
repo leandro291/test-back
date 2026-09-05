@@ -18,6 +18,25 @@ class RoleModelTests(TestCase):
         with self.assertRaises(IntegrityError):
             Role.objects.create(code='customer', name='Duplicate')
 
+    def test_soft_deleted_code_can_be_reused(self):
+        seller = Role.objects.get(code='seller')
+        seller.delete()
+
+        revived = Role.objects.create(code='seller', name='Seller 2')
+
+        self.assertIsNone(revived.deleted_at)
+        self.assertEqual(Role.all_objects.filter(code='seller').count(), 2)
+
+    def test_user_role_resolves_when_role_is_soft_deleted(self):
+        seller = Role.objects.get(code='seller')
+        user = User.objects.create_user(
+            username='s', email='s@x.com', password='x', role=seller,
+        )
+        seller.delete()
+        user.refresh_from_db()
+
+        self.assertEqual(user.role.code, 'seller')
+
     def test_str_returns_name(self):
         role = Role.objects.create(code='manager', name='Manager')
         self.assertEqual(str(role), 'Manager')
@@ -27,6 +46,16 @@ class RoleModelTests(TestCase):
         second = get_default_role()
         self.assertEqual(first, second)
         self.assertEqual(Role.objects.filter(code='customer').count(), 1)
+
+    def test_get_default_role_restores_a_soft_deleted_customer(self):
+        first = get_default_role()
+        Role.all_objects.get(pk=first).delete()
+
+        second = get_default_role()
+
+        self.assertEqual(first, second)
+        self.assertIsNone(Role.all_objects.get(pk=first).deleted_at)
+        self.assertEqual(Role.all_objects.filter(code='customer').count(), 1)
 
     def test_with_user_count_annotates(self):
         customer = Role.objects.get(code='customer')

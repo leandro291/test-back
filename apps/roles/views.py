@@ -1,4 +1,3 @@
-from django.db.models import ProtectedError
 from rest_framework import status, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -26,10 +25,11 @@ class RoleViewSet(viewsets.ModelViewSet):
         return RoleSerializer
 
     def destroy(self, request, *args, **kwargs):
-        try:
-            return super().destroy(request, *args, **kwargs)
-        except ProtectedError:
+        """Soft delete unless the role still has users assigned (then 409)."""
+        instance = self.get_object()
+        if instance.users.exists():
             return Response(
                 {'detail': 'No se puede eliminar un rol con usuarios asignados.'},
                 status=status.HTTP_409_CONFLICT,
             )
+        return super().destroy(request, *args, **kwargs)

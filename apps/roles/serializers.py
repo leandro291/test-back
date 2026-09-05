@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from rest_framework.validators import UniqueValidator
 
 from .models import Role
 
@@ -6,6 +7,10 @@ from .models import Role
 class RoleSerializer(serializers.ModelSerializer):
     """Read and create representation of a role, including its user count."""
 
+    code = serializers.SlugField(
+        max_length=32,
+        validators=[UniqueValidator(queryset=Role.objects.all())],
+    )
     user_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -25,5 +30,4 @@ class RoleSerializer(serializers.ModelSerializer):
 class RoleUpdateSerializer(RoleSerializer):
     """Update representation: code is immutable after creation."""
 
-    class Meta(RoleSerializer.Meta):
-        read_only_fields = RoleSerializer.Meta.read_only_fields + ['code']
+    code = serializers.SlugField(read_only=True)

@@ -104,6 +104,15 @@ class RoleAPITests(APITestCase):
         self.client.force_authenticate(self.staff)
         response = self.client.delete(self.detail_url(role.pk))
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Role.objects.filter(pk=role.pk).exists())
+        self.assertIsNotNone(Role.all_objects.get(pk=role.pk).deleted_at)
+
+    def test_create_reuses_a_soft_deleted_code(self):
+        role = Role.objects.create(code='manager', name='Manager')
+        role.delete()
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(self.list_url, {'code': 'manager', 'name': 'Manager 2'})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
     def test_delete_role_with_users_returns_409(self):
         self.client.force_authenticate(self.staff)
@@ -114,3 +123,4 @@ class RoleAPITests(APITestCase):
             'No se puede eliminar un rol con usuarios asignados.',
         )
         self.assertTrue(Role.objects.filter(code='customer').exists())
+        self.assertIsNone(Role.objects.get(code='customer').deleted_at)

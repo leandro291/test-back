@@ -116,3 +116,13 @@ class CategoryAPITests(APITestCase):
         response = self.client.delete(self.detail_url(self.snacks.pk))
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Category.objects.filter(pk=self.snacks.pk).exists())
+        self.assertIsNotNone(Category.all_objects.get(pk=self.snacks.pk).deleted_at)
+        detail = self.client.get(self.detail_url(self.snacks.pk))
+        self.assertEqual(detail.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_recreate_a_soft_deleted_name_and_slug(self):
+        self.client.force_authenticate(self.staff)
+        self.client.delete(self.detail_url(self.beverages.pk))
+        response = self.client.post(self.list_url, {'name': 'Beverages'})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['slug'], 'beverages')

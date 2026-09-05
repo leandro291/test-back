@@ -1,11 +1,22 @@
 from django.utils.text import slugify
 from rest_framework import serializers
+from rest_framework.validators import UniqueValidator
 
 from .models import Category
 
 
 class CategorySerializer(serializers.ModelSerializer):
     """Read and write representation of a flat catalog category."""
+
+    name = serializers.CharField(
+        max_length=100,
+        validators=[UniqueValidator(queryset=Category.objects.all())],
+    )
+    slug = serializers.SlugField(
+        max_length=120,
+        required=False,
+        validators=[UniqueValidator(queryset=Category.objects.all())],
+    )
 
     class Meta:
         model = Category
@@ -14,7 +25,6 @@ class CategorySerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
-        extra_kwargs = {'slug': {'required': False}}
 
     def validate(self, attrs):
         """Fill the slug from the name when omitted and reject collisions with 400, not 500."""

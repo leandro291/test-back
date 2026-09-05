@@ -39,3 +39,21 @@ class CategoryModelTests(TestCase):
             list(Category.objects.active().values_list('name', flat=True)),
             ['Visible'],
         )
+
+    def test_active_composes_with_alive(self):
+        category = Category.objects.create(name='Active Dead', is_active=True)
+        category.delete()
+        self.assertNotIn(
+            'Active Dead',
+            Category.objects.active().values_list('name', flat=True),
+        )
+        self.assertIn(
+            'Active Dead',
+            Category.all_objects.dead().values_list('name', flat=True),
+        )
+
+    def test_soft_deleted_name_can_be_reused(self):
+        category = Category.objects.create(name='Beverages')
+        category.delete()
+        revived = Category.objects.create(name='Beverages')
+        self.assertIsNone(revived.deleted_at)
