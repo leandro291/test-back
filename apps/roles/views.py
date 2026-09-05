@@ -3,9 +3,10 @@ from rest_framework import status, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.core.permissions import IsAdminOrReadOnly
+
 from .filters import RoleFilter
 from .models import Role
-from .permissions import IsAdminOrReadOnly
 from .serializers import RoleSerializer, RoleUpdateSerializer
 
 
