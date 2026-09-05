@@ -1,7 +1,11 @@
-from django.db import IntegrityError
+from decimal import Decimal
+
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
+from django.db.models.deletion import ProtectedError
 from django.test import TestCase
 
-from apps.catalog.models import Category
+from apps.catalog.models import Category, Product
 
 
 class CategoryModelTests(TestCase):
@@ -57,3 +61,79 @@ class CategoryModelTests(TestCase):
         category.delete()
         revived = Category.objects.create(name='Beverages')
         self.assertIsNone(revived.deleted_at)
+
+
+class ProductModelTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.category = Category.objects.create(name='Beverages')
+
+    def make_product(self, **kwargs):
+        kwargs.setdefault('name', 'Yerba Mate 1kg')
+        kwargs.setdefault('price', Decimal('3499.00'))
+        kwargs.setdefault('category', self.category)
+        return Product.objects.create(**kwargs)
+
+    def test_str_returns_name(self):
+        self.assertEqual(str(Product(name='Yerba Mate 1kg')), 'Yerba Mate 1kg')
+
+    def test_field_defaults(self):
+        product = self.make_product()
+        self.assertEqual(product.stock, 0)
+        self.assertTrue(product.is_active)
+        self.assertEqual(product.image_url, '')
+
+    def test_negative_price_raises_integrity_error(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Product.objects.create(
+                name='Bad', price=Decimal('-1.00'), category=self.category,
+            )
+
+    def test_negative_price_fails_full_clean(self):
+        product = Product(
+            name='Bad', price=Decimal('-1.00'), category=self.category,
+        )
+        with self.assertRaises(ValidationError):
+            product.full_clean()
+
+    def test_in_stock_splits_by_stock(self):
+        with_stock = self.make_product(name='In stock', stock=5)
+        self.make_product(name='Out of stock', stock=0)
+        self.assertEqual(
+            list(Product.objects.in_stock().values_list('name', flat=True)),
+            [with_stock.name],
+        )
+
+    def test_visible_excludes_inactive_product(self):
+        self.make_product(name='Hidden', is_active=False)
+        self.assertNotIn(
+            'Hidden', Product.objects.visible().values_list('name', flat=True),
+        )
+
+    def test_visible_excludes_product_of_inactive_category(self):
+        inactive = Category.objects.create(name='Inactive', is_active=False)
+        self.make_product(name='Orphan', category=inactive)
+        self.assertNotIn(
+            'Orphan', Product.objects.visible().values_list('name', flat=True),
+        )
+
+    def test_visible_excludes_product_of_soft_deleted_category(self):
+        doomed = Category.objects.create(name='Doomed')
+        product = self.make_product(name='Stranded', category=doomed)
+        doomed.delete()
+        self.assertNotIn(
+            'Stranded', Product.objects.visible().values_list('name', flat=True),
+        )
+        self.assertEqual(product.category_id, doomed.pk)
+
+    def test_soft_delete_is_inherited(self):
+        product = self.make_product()
+        product.delete()
+        self.assertFalse(Product.objects.filter(pk=product.pk).exists())
+        revived = Product.all_objects.get(pk=product.pk)
+        self.assertIsNotNone(revived.deleted_at)
+
+    def test_hard_delete_category_with_live_product_raises_protected_error(self):
+        self.make_product()
+        with self.assertRaises(ProtectedError), transaction.atomic():
+            self.category.hard_delete()

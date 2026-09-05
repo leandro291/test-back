@@ -1,8 +1,10 @@
+from urllib.parse import urlparse
+
 from django.utils.text import slugify
 from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 
-from .models import Category
+from .models import Category, Product
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -41,3 +43,53 @@ class CategorySerializer(serializers.ModelSerializer):
                     )
                 attrs['slug'] = candidate
         return attrs
+
+
+class CategorySlimSerializer(serializers.ModelSerializer):
+    """Minimal nested representation of a category."""
+
+    class Meta:
+        model = Category
+        fields = ['id', 'name', 'slug']
+
+
+class ProductReadSerializer(serializers.ModelSerializer):
+    """Read representation of a product with its nested category."""
+
+    category = CategorySlimSerializer(read_only=True)
+
+    class Meta:
+        model = Product
+        fields = [
+            'id', 'name', 'description', 'price', 'stock', 'is_active',
+            'image_url', 'category', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class ProductWriteSerializer(serializers.ModelSerializer):
+    """Write representation of a product; the category must be a live one."""
+
+    category = serializers.PrimaryKeyRelatedField(queryset=Category.objects.all())
+
+    class Meta:
+        model = Product
+        fields = [
+            'id', 'name', 'description', 'price', 'stock', 'is_active',
+            'image_url', 'category',
+        ]
+        read_only_fields = ['id']
+
+    def validate_price(self, value):
+        """Reject negative prices with a clean field error."""
+        if value < 0:
+            raise serializers.ValidationError('Price cannot be negative.')
+        return value
+
+    def validate_image_url(self, value):
+        """When provided, the URL host must belong to Cloudinary."""
+        if value and 'cloudinary.com' not in (urlparse(value).hostname or ''):
+            raise serializers.ValidationError(
+                'The image URL must be hosted on cloudinary.com.'
+            )
+        return value

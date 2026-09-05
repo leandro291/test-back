@@ -1,8 +1,10 @@
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.catalog.models import Category
+from apps.catalog.models import Category, Product
 from apps.roles.models import Role
 
 User = get_user_model()
@@ -126,3 +128,233 @@ class CategoryAPITests(APITestCase):
         response = self.client.post(self.list_url, {'name': 'Beverages'})
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['slug'], 'beverages')
+
+    def test_delete_category_with_products_returns_409(self):
+        Product.objects.create(
+            name='Cola', price=Decimal('1000.00'), category=self.beverages,
+        )
+        self.client.force_authenticate(self.staff)
+        response = self.client.delete(self.detail_url(self.beverages.pk))
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(
+            response.data['detail'],
+            'No se puede eliminar una categoría con productos asociados.',
+        )
+        self.assertTrue(Category.objects.filter(pk=self.beverages.pk).exists())
+
+    def test_delete_category_with_only_soft_deleted_products_ok(self):
+        product = Product.objects.create(
+            name='Cola', price=Decimal('1000.00'), category=self.beverages,
+        )
+        product.delete()
+        self.client.force_authenticate(self.staff)
+        response = self.client.delete(self.detail_url(self.beverages.pk))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Category.objects.filter(pk=self.beverages.pk).exists())
+
+
+class ProductAPITests(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        role = Role.objects.get(code='customer')
+        cls.user = User.objects.create_user(
+            username='plain', email='plain@x.com', password='x', role=role,
+        )
+        cls.staff = User.objects.create_user(
+            username='staff', email='staff@x.com', password='x', is_staff=True, role=role,
+        )
+        cls.beverages = Category.objects.create(name='Beverages')
+        cls.inactive_category = Category.objects.create(name='Draft', is_active=False)
+        cls.dead_category = Category.objects.create(name='Gone')
+
+        cls.visible = Product.objects.create(
+            name='Yerba Mate 1kg', price=Decimal('3499.00'), stock=42,
+            category=cls.beverages,
+        )
+        cls.cheap = Product.objects.create(
+            name='Water 500ml', price=Decimal('500.00'), stock=0,
+            category=cls.beverages,
+        )
+        cls.inactive_product = Product.objects.create(
+            name='Secret Blend', price=Decimal('900.00'), is_active=False,
+            category=cls.beverages,
+        )
+        cls.product_of_inactive_cat = Product.objects.create(
+            name='Draft Item', price=Decimal('100.00'), category=cls.inactive_category,
+        )
+        cls.product_of_dead_cat = Product.objects.create(
+            name='Stranded', price=Decimal('100.00'), category=cls.dead_category,
+        )
+        cls.dead_category.delete()
+
+        cls.list_url = '/api/v1/products/'
+
+    def detail_url(self, pk):
+        return f'/api/v1/products/{pk}/'
+
+    def valid_payload(self, **overrides):
+        payload = {
+            'name': 'New Product',
+            'price': '1234.00',
+            'category': self.beverages.pk,
+        }
+        payload.update(overrides)
+        return payload
+
+    # --- read / visibility ---
+
+    def test_list_public_and_paginated(self):
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('count', response.data)
+        self.assertIn('results', response.data)
+
+    def test_anonymous_sees_only_visible_products(self):
+        response = self.client.get(self.list_url)
+        names = {r['name'] for r in response.data['results']}
+        self.assertEqual(names, {'Yerba Mate 1kg', 'Water 500ml'})
+
+    def test_list_embeds_slim_category(self):
+        response = self.client.get(self.list_url)
+        row = next(r for r in response.data['results'] if r['name'] == 'Yerba Mate 1kg')
+        self.assertEqual(
+            row['category'],
+            {'id': self.beverages.pk, 'name': 'Beverages', 'slug': 'beverages'},
+        )
+
+    def test_anonymous_detail_of_non_visible_is_404(self):
+        for product in (
+            self.inactive_product,
+            self.product_of_inactive_cat,
+            self.product_of_dead_cat,
+        ):
+            response = self.client.get(self.detail_url(product.pk))
+            self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_staff_sees_non_visible_live_products(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.get(self.list_url)
+        names = {r['name'] for r in response.data['results']}
+        self.assertIn('Secret Blend', names)
+        self.assertIn('Draft Item', names)
+        self.assertIn('Stranded', names)
+
+    def test_staff_filters_by_is_active(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.get(self.list_url, {'is_active': 'false'})
+        names = [r['name'] for r in response.data['results']]
+        self.assertEqual(names, ['Secret Blend'])
+
+    # --- filters / search / ordering ---
+
+    def test_filter_by_category(self):
+        other = Category.objects.create(name='Food')
+        Product.objects.create(name='Bread', price=Decimal('800.00'), category=other)
+        response = self.client.get(self.list_url, {'category': other.pk})
+        names = [r['name'] for r in response.data['results']]
+        self.assertEqual(names, ['Bread'])
+
+    def test_filter_by_price_range(self):
+        response = self.client.get(
+            self.list_url, {'price_min': '1000', 'price_max': '5000'},
+        )
+        names = [r['name'] for r in response.data['results']]
+        self.assertEqual(names, ['Yerba Mate 1kg'])
+
+    def test_filter_in_stock(self):
+        response = self.client.get(self.list_url, {'in_stock': 'true'})
+        names = [r['name'] for r in response.data['results']]
+        self.assertEqual(names, ['Yerba Mate 1kg'])
+
+    def test_search_by_name(self):
+        response = self.client.get(self.list_url, {'search': 'yerba'})
+        names = [r['name'] for r in response.data['results']]
+        self.assertEqual(names, ['Yerba Mate 1kg'])
+
+    def test_ordering_by_price_ascending(self):
+        response = self.client.get(self.list_url, {'ordering': 'price'})
+        names = [r['name'] for r in response.data['results']]
+        self.assertEqual(names, ['Water 500ml', 'Yerba Mate 1kg'])
+
+    # --- write / permissions ---
+
+    def test_create_requires_token(self):
+        response = self.client.post(self.list_url, self.valid_payload())
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_create_forbidden_for_non_staff(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(self.list_url, self.valid_payload())
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_create_ok_for_staff(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(self.list_url, self.valid_payload())
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_create_rejects_negative_price(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(self.list_url, self.valid_payload(price='-1.00'))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('price', response.data)
+
+    def test_create_rejects_soft_deleted_category(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(
+            self.list_url, self.valid_payload(category=self.dead_category.pk),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('category', response.data)
+
+    def test_create_accepts_inactive_but_live_category(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(
+            self.list_url, self.valid_payload(category=self.inactive_category.pk),
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_create_rejects_non_cloudinary_image_url(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(
+            self.list_url,
+            self.valid_payload(image_url='https://example.com/pic.jpg'),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('image_url', response.data)
+
+    def test_create_accepts_cloudinary_image_url(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.post(
+            self.list_url,
+            self.valid_payload(
+                image_url='https://res.cloudinary.com/demo/image/upload/v1/yerba.jpg',
+            ),
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_patch_by_staff_persists(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.patch(
+            self.detail_url(self.visible.pk), {'stock': 7},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.visible.refresh_from_db()
+        self.assertEqual(self.visible.stock, 7)
+
+    def test_patch_forbidden_for_non_staff(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.patch(
+            self.detail_url(self.visible.pk), {'stock': 7},
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_delete_soft_deletes_product(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.delete(self.detail_url(self.visible.pk))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Product.objects.filter(pk=self.visible.pk).exists())
+        self.assertIsNotNone(
+            Product.all_objects.get(pk=self.visible.pk).deleted_at,
+        )
+        detail = self.client.get(self.detail_url(self.visible.pk))
+        self.assertEqual(detail.status_code, status.HTTP_404_NOT_FOUND)
