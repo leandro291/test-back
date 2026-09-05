@@ -1,0 +1,11 @@
+Django
+djangorestframework
+djangorestframework-simplejwt
+django-cors-headers
+django-filter
+cloudinary
+django-cloudinary-storage
+psycopg[binary]
+django-environ
+drf-spectacular
+Pillow
