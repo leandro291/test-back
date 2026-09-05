@@ -94,6 +94,8 @@ psycopg[binary]
 django-environ
 drf-spectacular
 Pillow
+gunicorn
+whitenoise[brotli]
 ```
 
 | Paquete | Rol |
@@ -108,6 +110,8 @@ Pillow
 | `django-environ` | Lectura de `.env` y casting de tipos |
 | `drf-spectacular` | Esquema OpenAPI 3 y UI Swagger en `/api/v1/docs/` |
 | `Pillow` | Validación de imágenes en `ImageField` |
+| `gunicorn` | Servidor WSGI en producción (Render) |
+| `whitenoise[brotli]` | Servir estáticos del admin/DRF en producción sin CDN |
 
 Agregar una dependencia fuera de esta lista requiere que una spec lo justifique.
 
@@ -174,7 +178,34 @@ Admin en `http://localhost:8000/admin/`, API en `http://localhost:8000/api/v1/`,
 
 ---
 
-## 6. Convenciones
+## 6. Deploy en producción (Render)
+
+Guía oficial: <https://render.com/docs/deploy-django>.
+
+- `build.sh` (raíz, ejecutable): `pip install` + `collectstatic` + `migrate`. Es el *Build Command*.
+- *Start Command*: `gunicorn config.wsgi:application`.
+- `render.yaml` (raíz): Blueprint opcional con el servicio web y las variables. Si se configura a
+  mano en el dashboard, alcanza con el Build y Start Command de arriba.
+- `config/settings/production.py`: `DEBUG=False`, SSL/HSTS/cookies seguras, WhiteNoise para los
+  estáticos, y `RENDER_EXTERNAL_HOSTNAME` sumado a `ALLOWED_HOSTS` y `CSRF_TRUSTED_ORIGINS`.
+
+Variables a cargar en Render (además de las que Render inyecta: `RENDER`, `RENDER_EXTERNAL_HOSTNAME`):
+
+```
+DJANGO_SETTINGS_MODULE=config.settings.production
+DJANGO_SECRET_KEY=            # generar uno nuevo, sin el prefijo django-insecure-
+DATABASE_URL=                 # connection string de Neon (o de una BD de Render)
+CLOUDINARY_CLOUD_NAME=
+CLOUDINARY_API_KEY=
+CLOUDINARY_API_SECRET=
+CORS_ALLOWED_ORIGINS=         # URL(s) del frontend
+```
+
+`migrate` corre en cada deploy dentro de `build.sh`.
+
+---
+
+## 7. Convenciones
 
 - Todas las apps viven bajo `apps/` y se registran como `apps.<nombre>` en `INSTALLED_APPS`.
 - Cada app expone su `urls.py`, incluido desde `config/urls.py` bajo `/api/v1/`.

@@ -1,0 +1,29 @@
+# Blueprint de Render — https://render.com/docs/blueprint-spec
+# Opcional: podés configurar el servicio a mano en el dashboard con
+# buildCommand "./build.sh" y startCommand "gunicorn config.wsgi:application".
+services:
+  - type: web
+    name: test-back
+    runtime: python
+    plan: free
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn config.wsgi:application"
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      - key: PYTHON_VERSION
+        value: "3.13"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: WEB_CONCURRENCY
+        value: "4"
+      - key: DATABASE_URL          # connection string de Neon (o de una BD de Render)
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS  # URL(s) del frontend, separadas por coma
+        sync: false

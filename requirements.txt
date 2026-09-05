@@ -9,3 +9,5 @@ psycopg[binary]
 django-environ
 drf-spectacular
 Pillow
+gunicorn
+whitenoise[brotli]
